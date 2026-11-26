@@ -1,1 +1,22 @@
+# Task 1: Iris Classification Pipeline
+# Python 3.9+ recommended
 
+pandas>=1.5
+numpy>=1.23
+scikit-learn>=1.1   # DecisionBoundaryDisplay needs 1.1 or newer
+seaborn>=0.12
+matplotlib>=3.5
+
+## Dataset
+Iris dataset (150 samples, 4 features, 3 species), loaded from:
+https://raw.githubusercontent.com/mwaskom/seaborn-data/master/iris.csv
+
+## How to run
+1. Open the notebook in JupyterLab or JupyterLite.
+2. Install the libraries: `pip install -r requirements.txt`
+3. Run all cells from top to bottom.
+
+## Key findings
+- Setosa is perfectly separable; versicolor and virginica overlap slightly.
+- The Decision Tree scored slightly higher than Logistic Regression, but the gap is one test sample out of 30.
+- Logistic Regression draws linear boundaries; the Decision Tree draws rectangular regions.
