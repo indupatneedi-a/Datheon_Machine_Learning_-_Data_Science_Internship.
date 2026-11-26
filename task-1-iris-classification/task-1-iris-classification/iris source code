@@ -1,0 +1,193 @@
+"""Task 1: Multi-Class Benchmark Classification Pipeline (Iris)
+Same code as task1_iris_classification.ipynb (cells joined in order)."""
+
+try:
+    from IPython.display import display
+except ImportError:  # running outside Jupyter
+    display = print
+
+
+# # Task 1: Multi-Class Benchmark Classification Pipeline (Iris)
+# 
+# **Goal:** Build an end-to-end classification pipeline with Scikit-Learn: EDA, feature scaling, 80/20 split,
+# Logistic Regression vs Decision Tree, benchmark metrics, confusion matrices and decision boundaries.
+# 
+# **Steps**
+# 1. Load the dataset with Pandas
+# 2. Exploratory pairplot (Seaborn)
+# 3. Normalize features with `StandardScaler`
+# 4. Train `LogisticRegression` and `DecisionTreeClassifier`
+# 5. Evaluate (accuracy, precision, recall, F1), confusion matrix heatmaps, decision boundaries
+
+
+# ## 1. Imports
+
+import warnings
+warnings.filterwarnings("ignore")
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import (accuracy_score, precision_score, recall_score,
+                             f1_score, classification_report, confusion_matrix)
+
+sns.set_theme(style="whitegrid")
+RANDOM_STATE = 42
+
+
+# ## 2. Load the dataset
+
+URL = "https://raw.githubusercontent.com/mwaskom/seaborn-data/master/iris.csv"
+
+try:
+    df = pd.read_csv(URL)
+except Exception:
+    # Offline fallback: bundled copy from scikit-learn
+    from sklearn.datasets import load_iris
+    data = load_iris(as_frame=True)
+    df = data.frame.rename(columns={
+        "sepal length (cm)": "sepal_length", "sepal width (cm)": "sepal_width",
+        "petal length (cm)": "petal_length", "petal width (cm)": "petal_width"})
+    df["species"] = data.target.map(dict(enumerate(data.target_names)))
+
+print("Shape:", df.shape)
+display(df.head())
+display(df.describe())
+print("\nMissing values:\n", df.isnull().sum())
+print("\nClass distribution:\n", df["species"].value_counts())
+
+
+# ## 3. Exploratory data analysis (pairplot)
+
+sns.pairplot(df, hue="species", diag_kind="kde", palette="Set2", corner=False)
+plt.suptitle("Iris Pairplot by Species", y=1.02)
+plt.show()
+
+plt.figure(figsize=(6, 5))
+sns.heatmap(df.drop(columns="species").corr(), annot=True, cmap="coolwarm", fmt=".2f")
+plt.title("Feature Correlation Heatmap")
+plt.show()
+
+
+# ## 4. Train/test split (80/20, stratified) and feature scaling
+
+X = df.drop(columns="species")
+y = df["species"]
+class_names = sorted(y.unique())
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.20, random_state=RANDOM_STATE, stratify=y)
+
+# Fit the scaler on TRAIN only to avoid data leakage
+scaler = StandardScaler()
+X_train_s = scaler.fit_transform(X_train)
+X_test_s = scaler.transform(X_test)
+
+print("Train:", X_train_s.shape, "| Test:", X_test_s.shape)
+print("Train mean (approx 0):", X_train_s.mean(axis=0).round(3))
+print("Train std  (approx 1):", X_train_s.std(axis=0).round(3))
+
+
+# ## 5. Train models
+
+models = {
+    "Logistic Regression": LogisticRegression(max_iter=1000, random_state=RANDOM_STATE),
+    "Decision Tree": DecisionTreeClassifier(max_depth=3, random_state=RANDOM_STATE),
+}
+
+predictions = {}
+for name, model in models.items():
+    model.fit(X_train_s, y_train)
+    predictions[name] = model.predict(X_test_s)
+    print(f"{name} trained.")
+
+
+# ## 6. Benchmark metrics
+
+rows = []
+for name, y_pred in predictions.items():
+    rows.append({
+        "Model": name,
+        "Accuracy": accuracy_score(y_test, y_pred),
+        "Precision (macro)": precision_score(y_test, y_pred, average="macro"),
+        "Recall (macro)": recall_score(y_test, y_pred, average="macro"),
+        "F1-score (macro)": f1_score(y_test, y_pred, average="macro"),
+    })
+
+results = pd.DataFrame(rows).set_index("Model").round(4)
+display(results)
+
+results.plot(kind="bar", figsize=(9, 5), ylim=(0.8, 1.05), rot=0, colormap="Set2")
+plt.title("Model Benchmark Comparison")
+plt.ylabel("Score")
+plt.legend(loc="lower right")
+plt.show()
+
+for name, y_pred in predictions.items():
+    print("=" * 60)
+    print(name)
+    print("=" * 60)
+    print(classification_report(y_test, y_pred, target_names=class_names, digits=3))
+
+
+# ## 7. Confusion matrix heatmaps
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+for ax, (name, y_pred) in zip(axes, predictions.items()):
+    cm = confusion_matrix(y_test, y_pred, labels=class_names)
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False,
+                xticklabels=class_names, yticklabels=class_names, ax=ax)
+    ax.set_title(f"{name}\nAccuracy: {accuracy_score(y_test, y_pred):.3f}")
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Actual")
+plt.tight_layout()
+plt.show()
+
+
+# ## 8. Decision boundary visualization
+# 
+# Boundaries can only be drawn in 2D, so models are re-trained on the two most discriminative
+# features (**petal length** and **petal width**), scaled with `StandardScaler`.
+
+feat_2d = ["petal_length", "petal_width"]
+sc2 = StandardScaler()
+Xtr2 = sc2.fit_transform(X_train[feat_2d])
+Xte2 = sc2.transform(X_test[feat_2d])
+
+label_map = {c: i for i, c in enumerate(class_names)}
+ytr2 = y_train.map(label_map).values
+yte2 = y_test.map(label_map).values
+
+def plot_boundary(model, ax, title):
+    model.fit(Xtr2, ytr2)
+    x_min, x_max = Xtr2[:, 0].min() - 0.5, Xtr2[:, 0].max() + 0.5
+    y_min, y_max = Xtr2[:, 1].min() - 0.5, Xtr2[:, 1].max() + 0.5
+    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 400), np.linspace(y_min, y_max, 400))
+    Z = model.predict(np.c_[xx.ravel(), yy.ravel()]).reshape(xx.shape)
+    ax.contourf(xx, yy, Z, alpha=0.3, cmap="Set2")
+    ax.scatter(Xtr2[:, 0], Xtr2[:, 1], c=ytr2, cmap="Set2", edgecolor="k", s=40, label="train")
+    ax.scatter(Xte2[:, 0], Xte2[:, 1], c=yte2, cmap="Set2", edgecolor="k", s=90, marker="*", label="test")
+    ax.set_xlabel("Petal length (scaled)")
+    ax.set_ylabel("Petal width (scaled)")
+    ax.set_title(f"{title} (test acc: {model.score(Xte2, yte2):.3f})")
+    ax.legend()
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+plot_boundary(LogisticRegression(max_iter=1000, random_state=RANDOM_STATE), axes[0], "Logistic Regression")
+plot_boundary(DecisionTreeClassifier(max_depth=3, random_state=RANDOM_STATE), axes[1], "Decision Tree")
+plt.tight_layout()
+plt.show()
+
+
+# ## 9. Conclusion
+# 
+# - Both models achieve high accuracy on Iris; *setosa* is perfectly separable, while *versicolor* and *virginica* overlap slightly.
+# - Logistic Regression yields smooth linear boundaries; the Decision Tree yields axis-aligned rectangular regions and can overfit with larger depth.
+# - Scaling matters most for Logistic Regression (gradient-based, regularized); trees are scale-invariant.
+# - **Next steps:** k-fold cross-validation, hyperparameter tuning with `GridSearchCV`, try the Wine dataset.
