@@ -54,5 +54,3 @@ https://jupyter.org/try-jupyter/lab/index.html?path=notebooks%2FHousing_Price_Re
 
 ## Screenshots
 <img width="1751" height="703" alt="Screenshot_26-11-2026_125835_jupyter org" src="https://github.com/user-attachments/assets/b2ec3247-77f5-408b-b9b3-adb2e25dc3fa" />
-<img width="1805" height="705" alt="Screenshot_26-11-2026_12581_jupyter org" src="https://github.com/user-attachments/assets/356a88cd-ed1a-424a-b3df-58bf0ecbca1c" />
-![Uploading Screenshot_26-11-2026_125739_jupyter.org.jpeg…]()
