@@ -1,0 +1,267 @@
+"""Task 2: Real Estate Housing Price Prediction (OLS, Ridge & Lasso)
+Same code as Housing_Price_Regression.ipynb (cells joined in order)."""
+
+try:
+    from IPython.display import display
+except ImportError:  # running outside Jupyter
+    display = print
+
+
+# # Task 2: Real Estate Housing Price Prediction (OLS, Ridge & Lasso Regression)
+# 
+# **Goal:** Continuous regression modeling, feature engineering, multicollinearity handling and residual error analysis.
+# 
+# **Steps**
+# 1. Load the California Housing dataset
+# 2. Impute null values and plot correlation heatmap
+# 3. Engineer interaction/ratio features and handle multicollinearity (VIF)
+# 4. Standardize numeric variables and one-hot encode categorical attributes
+# 5. Fit OLS, Ridge (L2) and Lasso (L1) with `GridSearchCV` over multiple alphas
+# 6. Compare RMSE, MAE, R2 and plot predicted vs actual + residual distributions
+# 
+# > **JupyterLite users:** run `%pip install seaborn` in the first cell if seaborn is missing.
+
+
+# ## 1. Imports
+
+import warnings
+warnings.filterwarnings("ignore")
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
+sns.set_theme(style="whitegrid")
+RANDOM_STATE = 42
+
+
+# ## 2. Load the dataset
+
+URL = "https://raw.githubusercontent.com/ageron/handson-ml2/master/datasets/housing/housing.csv"
+
+df = pd.read_csv(URL)
+
+print("Shape:", df.shape)
+display(df.head())
+display(df.describe())
+print("\nMissing values:\n", df.isnull().sum())
+print("\nocean_proximity values:\n", df["ocean_proximity"].value_counts())
+
+
+# ## 3. Exploratory analysis
+
+fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+sns.histplot(df["median_house_value"], bins=50, kde=True, ax=axes[0])
+axes[0].set_title("Distribution of Median House Value")
+sns.scatterplot(data=df, x="longitude", y="latitude", hue="median_house_value",
+                palette="viridis", s=8, alpha=0.5, legend=False, ax=axes[1])
+axes[1].set_title("House Value by Location")
+plt.tight_layout()
+plt.show()
+
+
+# ## 4. Impute null values and correlation heatmap
+
+# Median imputation for the only column with nulls (total_bedrooms)
+df_imp = df.copy()
+df_imp["total_bedrooms"] = df_imp["total_bedrooms"].fillna(df_imp["total_bedrooms"].median())
+print("Nulls after imputation:", df_imp.isnull().sum().sum())
+
+plt.figure(figsize=(10, 8))
+sns.heatmap(df_imp.drop(columns="ocean_proximity").corr(), annot=True, fmt=".2f", cmap="coolwarm")
+plt.title("Correlation Heatmap (numeric features)")
+plt.show()
+
+
+# ## 5. Feature engineering and multicollinearity
+# 
+# `total_rooms`, `total_bedrooms`, `population` and `households` are highly correlated with each other.
+# We create interaction/ratio features and measure multicollinearity with the **Variance Inflation Factor (VIF)**.
+
+def add_features(data):
+    data = data.copy()
+    data["rooms_per_household"] = data["total_rooms"] / data["households"]
+    data["bedrooms_per_room"] = data["total_bedrooms"] / data["total_rooms"]
+    data["population_per_household"] = data["population"] / data["households"]
+    data["income_x_rooms_per_hh"] = data["median_income"] * data["rooms_per_household"]
+    return data
+
+def compute_vif(data):
+    vifs = {}
+    for col in data.columns:
+        others = data.drop(columns=col)
+        r2 = LinearRegression().fit(others, data[col]).score(others, data[col])
+        vifs[col] = 1 / (1 - r2) if r2 < 1 else np.inf
+    return pd.Series(vifs, name="VIF").sort_values(ascending=False)
+
+df_fe = add_features(df_imp)
+
+raw_cols = ["longitude", "latitude", "housing_median_age", "total_rooms", "total_bedrooms",
+            "population", "households", "median_income"]
+print("VIF BEFORE removing collinear columns:")
+display(compute_vif(df_fe[raw_cols]).round(2).to_frame())
+
+# Drop the raw count columns that drive the collinearity; keep the engineered ratios
+drop_cols = ["total_rooms", "total_bedrooms", "population", "households"]
+num_features = ["longitude", "latitude", "housing_median_age", "median_income",
+                "rooms_per_household", "bedrooms_per_room",
+                "population_per_household", "income_x_rooms_per_hh"]
+
+print("VIF AFTER removing collinear columns and adding ratio features:")
+display(compute_vif(df_fe[num_features]).round(2).to_frame())
+print("\nNote: longitude/latitude stay highly correlated with each other (geographic pair);")
+print("Ridge/Lasso regularization handles the remaining multicollinearity.")
+
+
+# ## 6. Train/test split and preprocessing pipeline
+
+cat_features = ["ocean_proximity"]
+target = "median_house_value"
+
+# Build features from the RAW data so imputation is learned inside the pipeline (no leakage)
+df_model = add_features(df).drop(columns=drop_cols)
+X = df_model[num_features + cat_features]
+y = df_model[target]
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.20, random_state=RANDOM_STATE)
+
+preprocessor = ColumnTransformer([
+    ("num", Pipeline([("imputer", SimpleImputer(strategy="median")),
+                      ("scaler", StandardScaler())]), num_features),
+    ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), cat_features),
+])
+
+print("Train:", X_train.shape, "| Test:", X_test.shape)
+
+
+# ## 7. Train OLS, Ridge and Lasso (GridSearchCV over alpha)
+
+alphas = np.logspace(-3, 3, 13)
+
+searches = {
+    "Ridge (L2)": GridSearchCV(
+        Pipeline([("prep", preprocessor), ("model", Ridge(random_state=RANDOM_STATE))]),
+        param_grid={"model__alpha": alphas}, cv=5,
+        scoring="neg_root_mean_squared_error", n_jobs=-1),
+    "Lasso (L1)": GridSearchCV(
+        Pipeline([("prep", preprocessor), ("model", Lasso(max_iter=20000, random_state=RANDOM_STATE))]),
+        param_grid={"model__alpha": alphas}, cv=5,
+        scoring="neg_root_mean_squared_error", n_jobs=-1),
+}
+
+ols = Pipeline([("prep", preprocessor), ("model", LinearRegression())])
+ols.fit(X_train, y_train)
+
+for name, gs in searches.items():
+    gs.fit(X_train, y_train)
+    print(f"{name}: best alpha = {gs.best_params_['model__alpha']:.4g} "
+          f"| CV RMSE = {-gs.best_score_:,.0f}")
+
+fitted = {"OLS": ols,
+          "Ridge (L2)": searches["Ridge (L2)"].best_estimator_,
+          "Lasso (L1)": searches["Lasso (L1)"].best_estimator_}
+
+# Cross-validated RMSE vs alpha
+plt.figure(figsize=(8, 5))
+for name, gs in searches.items():
+    plt.semilogx(alphas, -gs.cv_results_["mean_test_score"], marker="o", label=name)
+plt.xlabel("alpha (log scale)")
+plt.ylabel("CV RMSE")
+plt.title("GridSearchCV: RMSE vs Alpha")
+plt.legend()
+plt.show()
+
+
+# ## 8. Model comparison (RMSE, MAE, R2)
+
+rows, preds = [], {}
+for name, model in fitted.items():
+    y_pred = model.predict(X_test)
+    preds[name] = y_pred
+    rows.append({
+        "Model": name,
+        "RMSE": np.sqrt(mean_squared_error(y_test, y_pred)),
+        "MAE": mean_absolute_error(y_test, y_pred),
+        "R2": r2_score(y_test, y_pred),
+    })
+
+results = pd.DataFrame(rows).set_index("Model").round(4)
+display(results)
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+for ax, metric in zip(axes, ["RMSE", "MAE", "R2"]):
+    results[metric].plot(kind="bar", ax=ax, color=["#4C72B0", "#55A868", "#C44E52"], rot=0)
+    ax.set_title(metric)
+plt.tight_layout()
+plt.show()
+
+
+# ## 9. Coefficients (Lasso shrinks weak features to zero)
+
+feature_names = fitted["OLS"].named_steps["prep"].get_feature_names_out()
+coef_df = pd.DataFrame({
+    "feature": feature_names,
+    "OLS": fitted["OLS"].named_steps["model"].coef_,
+    "Ridge": fitted["Ridge (L2)"].named_steps["model"].coef_,
+    "Lasso": fitted["Lasso (L1)"].named_steps["model"].coef_,
+}).set_index("feature").round(1)
+display(coef_df)
+
+print("Features zeroed out by Lasso:", list(coef_df.index[coef_df["Lasso"] == 0]))
+
+coef_df.plot(kind="barh", figsize=(10, 7))
+plt.title("Model Coefficients")
+plt.show()
+
+
+# ## 10. Predicted vs actual
+
+fig, axes = plt.subplots(1, 3, figsize=(16, 5), sharex=True, sharey=True)
+lims = [y_test.min(), y_test.max()]
+for ax, (name, y_pred) in zip(axes, preds.items()):
+    ax.scatter(y_test, y_pred, alpha=0.3, s=10)
+    ax.plot(lims, lims, "r--", label="Perfect prediction")
+    ax.set_title(f"{name}  (R2 = {r2_score(y_test, y_pred):.3f})")
+    ax.set_xlabel("Actual value")
+    ax.set_ylabel("Predicted value")
+    ax.legend()
+plt.tight_layout()
+plt.show()
+
+
+# ## 11. Residual error analysis
+
+fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+for i, (name, y_pred) in enumerate(preds.items()):
+    residuals = y_test - y_pred
+    sns.histplot(residuals, bins=50, kde=True, ax=axes[0, i])
+    axes[0, i].axvline(0, color="r", linestyle="--")
+    axes[0, i].set_title(f"{name}: Residual Distribution")
+    axes[0, i].set_xlabel("Residual (actual - predicted)")
+
+    axes[1, i].scatter(y_pred, residuals, alpha=0.3, s=10)
+    axes[1, i].axhline(0, color="r", linestyle="--")
+    axes[1, i].set_title(f"{name}: Residuals vs Predicted")
+    axes[1, i].set_xlabel("Predicted value")
+    axes[1, i].set_ylabel("Residual")
+plt.tight_layout()
+plt.show()
+
+
+# ## 12. Conclusion
+# 
+# - Engineered ratio features (`rooms_per_household`, `bedrooms_per_room`, `population_per_household`, `income_x_rooms_per_hh`) reduce the multicollinearity of the raw count columns.
+# - OLS, Ridge and Lasso perform very similarly here because, after feature engineering, the data is only mildly collinear. Regularization mainly adds stability.
+# - Lasso can zero out weak features, which helps interpretability.
+# - Residuals fan out for expensive homes and the target is capped at $500k, so a linear model cannot capture everything.
+# - **Next steps:** try polynomial features, tree-based models (Random Forest / Gradient Boosting) and log-transforming the target.
